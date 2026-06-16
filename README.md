@@ -11,7 +11,7 @@ A "weather forecast for security" — a live, LGA-level risk dashboard for Niger
 | Feature | Detail |
 |---|---|
 | **Choropleth map** | All 775 Nigerian LGAs coloured LOW → MODERATE → HIGH → SEVERE |
-| **7-day forecast** | Slide forward in time; scores extrapolate using trend velocity + news sentiment decay |
+| **Timeline slider** | Slide from −3 days (historical) through today to +3 days (forecast); scores use trend velocity + news sentiment decay |
 | **Incident type filters** | Kidnappings, school abductions, jihadist attacks, bombings, banditry, riots, protests, and more |
 | **Live news feed** | Scrapes 10 Nigerian RSS sources; NLP classifies security relevance and sentiment |
 | **State rankings** | Left sidebar ranks all 36 states + FCT by average risk score |
@@ -115,8 +115,9 @@ python scripts/run_acled_sync.py --full
 # 7. Score all LGAs
 python scripts/run_scorer.py
 
-# 8. Generate 7-day forecasts
+# 8. Generate +3-day forecasts and -3-day hindcasts (for the timeline slider)
 curl -X POST http://localhost:8001/api/risk/forecast/run
+curl -X POST http://localhost:8001/api/risk/hindcast/run
 
 # 9. Start API server
 uvicorn main:app --port 8001 --reload
@@ -174,7 +175,8 @@ python scripts/run_acled_sync.py       # incremental sync since last event
 | `GET /api/risk/geojson` | GeoJSON choropleth · `?score_date=YYYY-MM-DD` for forecasts |
 | `GET /api/risk/summary` | National overview + per-state breakdown |
 | `GET /api/risk/lga/{id}` | Full score breakdown for one LGA |
-| `GET /api/risk/forecast/run` | Trigger 7-day forecast generation |
+| `POST /api/risk/forecast/run` | Trigger +3-day forecast generation |
+| `POST /api/risk/hindcast/run` | Trigger −3-day hindcast back-projection |
 | `GET /api/news` | Paginated security news · `?state=&source=` |
 | `GET /api/incidents` | Paginated incidents · `?state=&event_type=&days=` |
 | `GET /api/incidents/filters` | Available incident type filter definitions |

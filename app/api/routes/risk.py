@@ -160,6 +160,14 @@ async def run_forecast(db: AsyncSession = Depends(get_db)):
     return result
 
 
+@router.post("/hindcast/run", tags=["risk"])
+async def run_hindcast(db: AsyncSession = Depends(get_db)):
+    """Back-project today's scores 3 days into the past for the timeline slider."""
+    from app.services.forecaster import generate_hindcasts
+    result = await generate_hindcasts(db)
+    return result
+
+
 # ── National summary ────────────────────────────────────────────────────────
 
 @router.get("/summary", response_model=NationalSummary)

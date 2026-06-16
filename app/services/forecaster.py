@@ -36,6 +36,7 @@ from app.models.risk_score import RiskScore, SecurityLevel
 logger = logging.getLogger(__name__)
 
 FORECAST_DAYS = [1, 2, 3, 4, 5, 6, 7]
+HINDCAST_DAYS = [1, 2, 3]  # days back (stored as today-N with is_forecast=False)
 NEUTRAL_FLOOR = 30.0
 NEWS_HALFLIFE = 2.0   # days until news push halves
 MEAN_REVERT_RATE = 0.025  # fraction per day toward neutral floor
@@ -183,6 +184,84 @@ async def generate_forecasts(db: AsyncSession) -> dict:
         "by_date": by_day,
     }
     logger.info("Forecast complete: %s", summary)
+    return summary
+
+
+async def generate_hindcasts(db: AsyncSession) -> dict:
+    """
+    Back-project today's scores N days into the past using inverse trend velocity.
+
+    Stored as is_forecast=False so the GeoJSON endpoint treats them as actuals.
+    Real scorer output will overwrite these if/when the scorer runs for those dates.
+    """
+    today = date.today()
+    calculated_at = datetime.now(timezone.utc)
+
+    rows = (await db.execute(text("""
+        SELECT lga_id, score, incident_frequency_score,
+               incident_trend_score, news_sentiment_score, components
+        FROM risk_scores
+        WHERE score_date = :today AND is_forecast = false
+    """), {"today": today})).fetchall()
+
+    if not rows:
+        return {"error": "no_actual_scores", "date": str(today)}
+
+    logger.info("Generating hindcasts for %d LGAs, %d days back", len(rows), len(HINDCAST_DAYS))
+
+    records: list[dict[str, Any]] = []
+
+    for row in rows:
+        comp = row.components or {}
+        trend_direction = comp.get("trend_direction", "stable")
+        trend_ratio = comp.get("trend_ratio")
+        avg_sentiment = comp.get("avg_news_sentiment")
+        cs = comp.get("component_scores", {})
+
+        velocity = _trend_velocity(trend_direction, trend_ratio)
+
+        for days_back in HINDCAST_DAYS:
+            past_date = today - timedelta(days=days_back)
+
+            # Reverse-apply: subtract forward velocity and decay terms
+            news = _news_push(avg_sentiment, days_back)
+            revert = _mean_revert(row.score, days_back)
+            past_score = max(5.0, min(95.0, round(
+                row.score - velocity * days_back - news - revert, 2
+            )))
+            level = SecurityLevel.from_score(past_score).value
+
+            freq_h = max(0.0, min(100.0, (cs.get("frequency", 0.0) or 0.0) - velocity * days_back * 0.5))
+            trend_h = max(0.0, min(100.0, (cs.get("trend", row.incident_trend_score) or 0.0) - velocity * days_back * 0.3))
+            news_h = max(0.0, min(100.0, (cs.get("news", row.news_sentiment_score) or 0.0) - news))
+
+            hindcast_components = {
+                **comp,
+                "hindcast_day": -days_back,
+                "score_delta": round(past_score - row.score, 2),
+                "component_scores": {
+                    "frequency": round(freq_h, 2),
+                    "trend": round(trend_h, 2),
+                    "news": round(news_h, 2),
+                },
+            }
+
+            records.append({
+                "lga_id": row.lga_id,
+                "score_date": past_date,
+                "is_forecast": False,
+                "score": past_score,
+                "level": level,
+                "incident_frequency_score": round(freq_h, 2),
+                "incident_trend_score": round(trend_h, 2),
+                "news_sentiment_score": round(news_h, 2),
+                "components": hindcast_components,
+                "calculated_at": calculated_at,
+            })
+
+    upserted = await _upsert_forecasts(db, records)
+    summary = {"lgas": len(rows), "days_back": len(HINDCAST_DAYS), "records_written": upserted}
+    logger.info("Hindcast complete: %s", summary)
     return summary
 
 
