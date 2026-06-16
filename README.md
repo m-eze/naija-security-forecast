@@ -80,7 +80,83 @@ Each day's projection applies three signals to the current score:
 
 ---
 
-## Getting started
+## Live demo
+
+| Service | URL |
+|---|---|
+| Frontend | https://naija-security-forecast.vercel.app |
+| Backend API | Deploy to Railway (see below) |
+
+---
+
+## Deployment
+
+### Frontend → Vercel (already deployed)
+
+The Next.js frontend is deployed to Vercel. To redeploy after changes:
+
+```bash
+cd frontend && vercel --prod --scope melvin-eze-projects
+```
+
+After the backend is deployed, set the API URL env var in Vercel:
+
+```bash
+# Replace with your actual Railway URL
+echo "https://your-app.railway.app/api" | vercel env add NEXT_PUBLIC_API_URL production \
+  --scope melvin-eze-projects
+vercel --prod --scope melvin-eze-projects   # redeploy to pick up the new var
+```
+
+### Backend → Railway
+
+The FastAPI backend, PostgreSQL+PostGIS database, and Redis worker all run on [Railway](https://railway.app).
+
+**One-time setup:**
+
+1. Create a Railway account at [railway.app](https://railway.app)
+2. Create a **New Project** → **Deploy from GitHub repo** → select this repo
+3. Railway auto-detects the `Dockerfile` and builds the API service
+4. Add two more services inside the same project:
+   - **PostgreSQL** (Railway template) — enable PostGIS: connect to the DB shell and run `CREATE EXTENSION postgis;`
+   - **Redis** (Railway template)
+5. Set environment variables on the API service (Settings → Variables):
+
+```env
+DATABASE_URL=postgresql+asyncpg://${{Postgres.PGUSER}}:${{Postgres.PGPASSWORD}}@${{Postgres.PGHOST}}:${{Postgres.PGPORT}}/${{Postgres.PGDATABASE}}
+SYNC_DATABASE_URL=postgresql+psycopg2://${{Postgres.PGUSER}}:${{Postgres.PGPASSWORD}}@${{Postgres.PGHOST}}:${{Postgres.PGPORT}}/${{Postgres.PGDATABASE}}
+REDIS_URL=${{Redis.REDIS_URL}}
+ACLED_EMAIL=your@email.com
+ACLED_API_KEY=your-acled-access-key
+SECRET_KEY=<generate a strong random string>
+ENVIRONMENT=production
+```
+
+6. After first deploy, open a Railway shell on the API service and run one-time setup:
+
+```bash
+# Run DB migrations
+alembic upgrade head
+
+# Seed LGA boundaries (~40 MB GADM download)
+pip install geopandas  && python scripts/seed_lgas.py
+
+# Optional: sync ACLED incident history (needs ACLED_API_KEY)
+pip install pandas scikit-learn && python scripts/run_acled_sync.py --full
+
+# Score all LGAs and generate the timeline slider data
+python scripts/run_scorer.py
+curl -X POST http://localhost:8001/api/risk/forecast/run
+curl -X POST http://localhost:8001/api/risk/hindcast/run
+```
+
+7. Copy the Railway public URL (e.g. `https://naija-security-forecast-production.up.railway.app`) and set it in Vercel (see above).
+
+> **Note:** `requirements-prod.txt` is used in the Dockerfile — it excludes heavy dev deps (`spacy`, `playwright`, `geopandas`) that are only needed for the one-time seeding scripts.
+
+---
+
+## Getting started (local)
 
 ### Prerequisites
 
