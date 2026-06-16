@@ -100,6 +100,25 @@ export interface PaginatedNews {
   items: NewsArticle[];
 }
 
+// /api/news/pins
+export interface NewsPin {
+  id: string;
+  headline: string;
+  url: string;
+  source: string;
+  published_at: string;
+  sentiment_label: "negative" | "neutral" | "positive";
+  state: string | null;
+  lga: string | null;
+  lat: number;
+  lng: number;
+}
+
+export interface NewsPinsResponse {
+  pins: NewsPin[];
+  count: number;
+}
+
 // /api/risk/geojson
 export interface GeoJSONProperties {
   name: string;

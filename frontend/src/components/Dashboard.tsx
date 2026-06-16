@@ -1,13 +1,15 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useCallback, useState } from "react";
-import type { GeoJSONCollection, NationalSummary } from "@/types";
+import { useCallback, useEffect, useState } from "react";
+import type { GeoJSONCollection, NationalSummary, NewsPin, NewsPinsResponse } from "@/types";
 import NationalSummaryBar from "./NationalSummaryBar";
 import StateRankingList from "./StateRankingList";
 import NewsFeed from "./NewsFeed";
 import FilterPanel, { type ActiveFilter } from "./FilterPanel";
 import TimeSlider from "./TimeSlider";
+
+const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8001/api";
 
 const NigeriaMap = dynamic(() => import("./NigeriaMap"), {
   ssr: false,
@@ -28,6 +30,20 @@ export default function Dashboard({ initialGeoJSON, summary }: Props) {
   const [activeFilter, setActiveFilter] = useState<ActiveFilter | null>(null);
   const [dayOffset, setDayOffset] = useState(0);
   const [isForecast, setIsForecast] = useState(false);
+  const [showNewsPins, setShowNewsPins] = useState(false);
+  const [newsPins, setNewsPins] = useState<NewsPin[]>([]);
+
+  // Fetch pins when toggled on; clear when toggled off
+  useEffect(() => {
+    if (!showNewsPins) {
+      setNewsPins([]);
+      return;
+    }
+    fetch(`${BASE}/news/pins?days=7`)
+      .then((r) => r.json())
+      .then((d: NewsPinsResponse) => setNewsPins(d.pins))
+      .catch(console.error);
+  }, [showNewsPins]);
 
   const handleFilterChange = useCallback(
     (geojson: GeoJSONCollection | null, filter: ActiveFilter | null) => {
@@ -90,7 +106,7 @@ export default function Dashboard({ initialGeoJSON, summary }: Props) {
 
       {/* ── Map ───────────────────────────────────────────────── */}
       <main className="flex-1 relative">
-        <NigeriaMap geojson={activeGeoJSON} />
+        <NigeriaMap geojson={activeGeoJSON} newsPins={newsPins} />
 
         {/* Forecast banner */}
         {isForecast && !activeFilter && (
@@ -118,6 +134,28 @@ export default function Dashboard({ initialGeoJSON, summary }: Props) {
             </span>
           </div>
         )}
+
+        {/* News pins toggle */}
+        <div className="absolute bottom-4 left-4 z-[1000]">
+          <button
+            onClick={() => setShowNewsPins((v) => !v)}
+            className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-full shadow-lg border transition-colors ${
+              showNewsPins
+                ? "bg-slate-800 text-white border-slate-800"
+                : "bg-white text-slate-600 border-gray-200 hover:bg-gray-50"
+            }`}
+          >
+            <span className="flex items-center gap-0.5">
+              <span className="w-2 h-2 rounded-full bg-red-400 inline-block" />
+              <span className="w-2 h-2 rounded-full bg-yellow-400 inline-block" />
+              <span className="w-2 h-2 rounded-full bg-green-400 inline-block" />
+            </span>
+            News pins
+            {showNewsPins && newsPins.length > 0 && (
+              <span className="bg-white/20 rounded-full px-1">{newsPins.length}</span>
+            )}
+          </button>
+        </div>
 
         {/* Time slider — hidden when filter active */}
         {!activeFilter && (
