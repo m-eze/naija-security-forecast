@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { GeoJSONCollection, NationalSummary, NewsPin, NewsPinsResponse } from "@/types";
 import NationalSummaryBar from "./NationalSummaryBar";
 import StateRankingList from "./StateRankingList";
@@ -25,6 +25,16 @@ interface Props {
   summary: NationalSummary;
 }
 
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diff / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
 export default function Dashboard({ initialGeoJSON, summary }: Props) {
   const [activeGeoJSON, setActiveGeoJSON] = useState(initialGeoJSON);
   const [activeFilter, setActiveFilter] = useState<ActiveFilter | null>(null);
@@ -32,6 +42,50 @@ export default function Dashboard({ initialGeoJSON, summary }: Props) {
   const [isForecast, setIsForecast] = useState(false);
   const [showNewsPins, setShowNewsPins] = useState(false);
   const [newsPins, setNewsPins] = useState<NewsPin[]>([]);
+
+  // News sync state
+  const [latestArticleAt, setLatestArticleAt] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<string | null>(null);
+  const syncResultTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Increment to force NewsFeed re-mount after a sync
+  const [feedKey, setFeedKey] = useState(0);
+
+  // Fetch news status on mount
+  useEffect(() => {
+    fetch(`${BASE}/news/status`)
+      .then((r) => r.json())
+      .then((d) => setLatestArticleAt(d.latest_article_at))
+      .catch(() => {});
+  }, []);
+
+  const handleResync = useCallback(async () => {
+    if (syncing) return;
+    setSyncing(true);
+    setSyncResult(null);
+    try {
+      const res = await fetch(`${BASE}/news/sync`, { method: "POST" });
+      if (!res.ok) throw new Error(`${res.status}`);
+      const d = await res.json();
+      const msg = `+${d.security_relevant} security · ${d.scraped} scraped`;
+      setSyncResult(msg);
+      setLatestArticleAt(new Date().toISOString());
+      setFeedKey((k) => k + 1);
+      // Refresh pins if shown
+      if (showNewsPins) {
+        fetch(`${BASE}/news/pins?days=7`)
+          .then((r) => r.json())
+          .then((pd: NewsPinsResponse) => setNewsPins(pd.pins))
+          .catch(() => {});
+      }
+    } catch {
+      setSyncResult("Sync failed");
+    } finally {
+      setSyncing(false);
+      if (syncResultTimer.current) clearTimeout(syncResultTimer.current);
+      syncResultTimer.current = setTimeout(() => setSyncResult(null), 4000);
+    }
+  }, [syncing, showNewsPins]);
 
   // Fetch pins when toggled on; clear when toggled off
   useEffect(() => {
@@ -171,13 +225,51 @@ export default function Dashboard({ initialGeoJSON, summary }: Props) {
 
       {/* ── Right sidebar ─────────────────────────────────────── */}
       <aside className="w-72 flex-shrink-0 flex flex-col border-l border-gray-200 bg-white">
+        {/* Header with resync */}
         <div className="px-4 pt-4 pb-2 border-b border-gray-100">
-          <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
-            Security News
-          </h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wide">
+              Security News
+            </h2>
+            <button
+              onClick={handleResync}
+              disabled={syncing}
+              title="Re-scrape all RSS feeds"
+              className={`flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded-md transition-colors ${
+                syncing
+                  ? "text-gray-300 cursor-not-allowed"
+                  : "text-indigo-500 hover:bg-indigo-50 hover:text-indigo-700"
+              }`}
+            >
+              <svg
+                className={`w-3 h-3 ${syncing ? "animate-spin" : ""}`}
+                viewBox="0 0 16 16"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+              >
+                <path d="M13.5 2.5A7 7 0 1 0 14 8" />
+                <polyline points="14 2 14 6 10 6" />
+              </svg>
+              {syncing ? "Syncing…" : "Resync"}
+            </button>
+          </div>
+
+          {/* Last updated / result line */}
+          <div className="mt-0.5 h-4 flex items-center">
+            {syncResult ? (
+              <p className="text-[10px] text-green-600 font-medium">{syncResult}</p>
+            ) : latestArticleAt ? (
+              <p className="text-[10px] text-gray-400">
+                Updated {timeAgo(latestArticleAt)}
+              </p>
+            ) : null}
+          </div>
         </div>
+
         <div className="flex-1 overflow-y-auto px-4 py-3">
-          <NewsFeed />
+          <NewsFeed key={feedKey} />
         </div>
       </aside>
     </div>

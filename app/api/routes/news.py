@@ -13,6 +13,31 @@ router = APIRouter(prefix="/news", tags=["news"])
 PAGE_SIZE_MAX = 100
 
 
+@router.get("/status")
+async def news_status(db: AsyncSession = Depends(get_db)):
+    """Latest article timestamp and 24-hour article counts."""
+    row = (await db.execute(text("""
+        SELECT
+            MAX(published_at)                                                              AS latest_at,
+            COUNT(*) FILTER (WHERE security_relevant = true)                              AS security_count,
+            COUNT(*) FILTER (WHERE security_relevant = true
+                               AND published_at >= NOW() - INTERVAL '24 hours')           AS count_24h
+        FROM news_articles
+    """))).fetchone()
+    return {
+        "latest_article_at": row.latest_at.isoformat() if row.latest_at else None,
+        "security_articles": int(row.security_count or 0),
+        "security_articles_24h": int(row.count_24h or 0),
+    }
+
+
+@router.post("/sync")
+async def sync_news(db: AsyncSession = Depends(get_db)):
+    """Trigger the RSS scrape + NLP pipeline manually."""
+    from app.services.news_pipeline import run_news_pipeline
+    return await run_news_pipeline(db)
+
+
 def _build_article(row) -> NewsArticleOut:
     return NewsArticleOut(
         id=row.id,
